@@ -2,6 +2,8 @@
 
 Windows 桌面版的安裝檔發布在 [Releases](https://github.com/kevintsai1202/subtutor-releases/releases)。
 
+**系統需求：** Windows 10／11（64 位元）。Mac 版規劃中。
+
 ## 安裝
 
 1. 到 [最新版本](https://github.com/kevintsai1202/subtutor-releases/releases/latest) 下載 `SubTutor_版本_x64-setup.exe`。
