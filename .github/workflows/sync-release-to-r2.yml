@@ -1,0 +1,72 @@
+name: Sync GitHub Release to Cloudflare R2
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要同步的 Release tag（例如 v0.2.22；留空則同步最新版本）'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  sync-r2:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      R2_BUCKET: subtutor-media
+      R2_PREFIX: releases
+    steps:
+      - name: 確認 Cloudflare Secrets 已設定
+        run: |
+          if [ -z "$CLOUDFLARE_ACCOUNT_ID" ] || [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo "::error::請在 Repository Secrets 設定 CLOUDFLARE_ACCOUNT_ID 與 CLOUDFLARE_API_TOKEN（需具備 R2 Storage: Edit 權限）"
+            exit 1
+          fi
+
+      - name: 下載 Release 資產
+        id: dl
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo "${{ github.repository }}" --json tagName -q .tagName)
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          mkdir -p ./release-assets
+          gh release download "$TAG" --repo "${{ github.repository }}" \
+            --pattern "*.exe" --pattern "latest*.json" \
+            --dir ./release-assets
+          ls -lh ./release-assets
+
+      - name: 上傳安裝檔至 Cloudflare R2（immutable 快取）
+        run: |
+          TAG="${{ steps.dl.outputs.tag }}"
+          shopt -s nullglob
+          for f in ./release-assets/*.exe; do
+            name=$(basename "$f")
+            echo "Uploading $name -> ${R2_BUCKET}/${R2_PREFIX}/${TAG}/${name}"
+            npx --yes wrangler@4 r2 object put "${R2_BUCKET}/${R2_PREFIX}/${TAG}/${name}" \
+              --file "$f" \
+              --content-type "application/octet-stream" \
+              --cache-control "public, max-age=31536000, immutable" \
+              --remote
+          done
+
+      - name: 上傳更新與下載清單至 Cloudflare R2（no-cache）
+        run: |
+          shopt -s nullglob
+          for f in ./release-assets/latest*.json; do
+            name=$(basename "$f")
+            echo "Uploading $name -> ${R2_BUCKET}/${R2_PREFIX}/${name}"
+            npx --yes wrangler@4 r2 object put "${R2_BUCKET}/${R2_PREFIX}/${name}" \
+              --file "$f" \
+              --content-type "application/json; charset=utf-8" \
+              --cache-control "no-cache" \
+              --remote
+          done
